@@ -1,8 +1,6 @@
 const WebSocket = require('ws');
-
 const server = new WebSocket.Server({ port: 8080 });
 
-// Keep track of rooms and connections
 const rooms = new Map();
 
 server.on('connection', (socket) => {
@@ -18,8 +16,15 @@ server.on('connection', (socket) => {
                     handleJoin(socket, data);
                     break;
                 case 'offer':
+                    relayMessage(data);
+                    break;
                 case 'answer':
+                    relayMessage(data);
+                    break;
                 case 'ice-candidate':
+                    relayMessage(data);
+                    break;
+                case 'player-update':
                     relayMessage(data);
                     break;
             }
@@ -30,11 +35,23 @@ server.on('connection', (socket) => {
     
     socket.on('close', () => {
         console.log('Client disconnected');
-        // Remove socket from all rooms
+        // Remove socket from all rooms and notify others
         rooms.forEach((clients, roomId) => {
-            clients.delete(socket);
-            if (clients.size === 0) {
-                rooms.delete(roomId);
+            if (clients.has(socket)) {
+                const peerId = socket.peerId;
+                clients.delete(socket);
+                
+                // Notify remaining clients about disconnection
+                clients.forEach(client => {
+                    client.send(JSON.stringify({
+                        type: 'player-disconnected',
+                        peerId: peerId
+                    }));
+                });
+                
+                if (clients.size === 0) {
+                    rooms.delete(roomId);
+                }
             }
         });
     });
@@ -49,24 +66,32 @@ function handleJoin(socket, data) {
     }
     
     const clients = rooms.get(room);
-    clients.add(socket);
     
-    // Assign a peer ID
-    socket.peerId = clients.size;
+    // Assign peer ID
+    socket.peerId = clients.size + 1;
     socket.room = room;
     
-    // Notify client of their peer ID
+    // Add to room
+    clients.add(socket);
+    
+    // Notify new client of their peer ID
     socket.send(JSON.stringify({
         type: 'peer-id',
         peerId: socket.peerId
     }));
     
-    // Notify other clients in the room
+    // Notify other clients about new player
     clients.forEach(client => {
         if (client !== socket) {
             client.send(JSON.stringify({
                 type: 'player-joined',
                 peerId: socket.peerId
+            }));
+            
+            // Tell new player about existing players
+            socket.send(JSON.stringify({
+                type: 'player-joined',
+                peerId: client.peerId
             }));
         }
     });
